@@ -57,10 +57,23 @@ export async function extractPropertyFromText(args: {
         features: { type: "array", items: { type: "string" } },
         description: { type: "string" },
         photoUrl: { type: ["string", "null"] },
-        sourceNotes: { type: "array", items: { type: "string" } }
+        sourceNotes: { type: "array", items: { type: "string" } },
       },
-      required: ["normalizedAddress", "price", "bedrooms", "bathrooms", "squareFootage", "lotSize", "yearBuilt", "propertyType", "features", "description", "photoUrl", "sourceNotes"]
-    }
+      required: [
+        "normalizedAddress",
+        "price",
+        "bedrooms",
+        "bathrooms",
+        "squareFootage",
+        "lotSize",
+        "yearBuilt",
+        "propertyType",
+        "features",
+        "description",
+        "photoUrl",
+        "sourceNotes",
+      ],
+    },
   };
 
   const resp = await openaiPost(apiKey, {
@@ -76,12 +89,20 @@ export async function extractPropertyFromText(args: {
               `Extract structured property facts from the listing text.\n` +
               `If a field is not present, return null.\n` +
               `Address user entered: ${address}\n\n` +
-              `Listing text:\n${listingText}`
-          }
-        ]
-      }
+              `Listing text:\n${listingText}`,
+          },
+        ],
+      },
     ],
-    response_format: { type: "json_schema", json_schema: schema }
+    // UPDATED: response_format -> text.format
+    text: {
+      format: {
+        type: "json_schema",
+        name: schema.name,
+        strict: true,
+        schema: schema.schema,
+      },
+    },
   });
 
   const text = extractOutputText(resp);
@@ -122,14 +143,21 @@ export async function runDeepDive(args: {
         highlights: { type: "array", items: { type: "string" } },
         redFlags: { type: "array", items: { type: "string" } },
         rentRationale: { type: "string" },
-        memo: { type: "string" }
+        memo: { type: "string" },
       },
-      required: ["highlights", "redFlags", "rentRationale", "memo"]
-    }
+      required: ["highlights", "redFlags", "rentRationale", "memo"],
+    },
   };
 
   const compLines = args.rentComps
-    .map((c, i) => `Comp ${i + 1}: ${c.address || ""} | rent=${c.rent ?? "?"} | beds=${c.bedrooms ?? "?"} baths=${c.bathrooms ?? "?"} sqft=${c.squareFootage ?? "?"} | link=${c.url || "n/a"}`)
+    .map(
+      (c, i) =>
+        `Comp ${i + 1}: ${c.address || ""} | rent=${c.rent ?? "?"} | beds=${
+          c.bedrooms ?? "?"
+        } baths=${c.bathrooms ?? "?"} sqft=${c.squareFootage ?? "?"} | link=${
+          c.url || "n/a"
+        }`
+    )
     .join("\n");
 
   const resp = await openaiPost(args.apiKey, {
@@ -151,12 +179,20 @@ export async function runDeepDive(args: {
               `- highlights: bullet strings\n` +
               `- redFlags: bullet strings\n` +
               `- rentRationale: short paragraph referencing comps shown\n` +
-              `- memo: ~1 page memo with sections: Overview, Assumptions, Scenario Results, Comps Summary, Risks, Next Steps.`
-          }
-        ]
-      }
+              `- memo: ~1 page memo with sections: Overview, Assumptions, Scenario Results, Comps Summary, Risks, Next Steps.`,
+          },
+        ],
+      },
     ],
-    response_format: { type: "json_schema", json_schema: schema }
+    // UPDATED: response_format -> text.format
+    text: {
+      format: {
+        type: "json_schema",
+        name: schema.name,
+        strict: true,
+        schema: schema.schema,
+      },
+    },
   });
 
   const text = extractOutputText(resp);
