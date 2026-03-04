@@ -13,6 +13,7 @@ export function RentalCompsTable(props: { comps: RentComp[] }) {
           <th className="text-right p-2 border">Baths</th>
           <th className="text-right p-2 border">Sqft</th>
           <th className="text-right p-2 border">Miles</th>
+          <th className="text-right p-2 border">Quality</th>
           <th className="text-left p-2 border">Link</th>
         </tr>
       </thead>
@@ -25,6 +26,7 @@ export function RentalCompsTable(props: { comps: RentComp[] }) {
             <td className="p-2 border text-right">{num(c.bathrooms, 1)}</td>
             <td className="p-2 border text-right">{num(c.squareFootage)}</td>
             <td className="p-2 border text-right">{c.distanceMiles?.toFixed(2) ?? "—"}</td>
+            <td className="p-2 border text-right">{c.score != null ? `${(c.score * 100).toFixed(0)}/100` : "—"}</td>
             <td className="p-2 border">
               {c.url ? (
                 <a className="underline" href={c.url} target="_blank" rel="noreferrer">
@@ -48,7 +50,7 @@ export function SalesCompsTable(props: { comps: SaleComp[]; onChange: (c: SaleCo
   };
 
   const add = () => {
-    if (props.comps.length >= 3) return;
+    if (props.comps.length >= 10) return;
     props.onChange([...props.comps, { address: "", price: 0 }]);
   };
 
@@ -57,7 +59,7 @@ export function SalesCompsTable(props: { comps: SaleComp[]; onChange: (c: SaleCo
   return (
     <div className="space-y-3">
       <div className="text-sm text-gray-700">
-        Sales comps are manual in MVP unless you add a sales comps provider.
+        Sales comps are auto-loaded from RentCast and can be edited manually.
       </div>
       {props.comps.map((c, i) => (
         <div key={i} className="grid grid-cols-1 md:grid-cols-6 gap-2 border rounded p-2">
@@ -73,8 +75,8 @@ export function SalesCompsTable(props: { comps: SaleComp[]; onChange: (c: SaleCo
           </button>
         </div>
       ))}
-      <button className="px-3 py-1 border rounded text-sm" onClick={add} disabled={props.comps.length >= 3}>
-        Add sale comp (max 3)
+      <button className="px-3 py-1 border rounded text-sm" onClick={add} disabled={props.comps.length >= 10}>
+        Add sale comp (max 10)
       </button>
     </div>
   );
