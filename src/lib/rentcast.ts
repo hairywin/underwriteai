@@ -50,7 +50,9 @@ export async function fetchPropertyFactsFromRentcast(
     squareFootage: p.squareFootage,
     lotSize: p.lotSize,
     yearBuilt: p.yearBuilt,
-    price: p.lastSalePrice ?? p.assessedValue ?? undefined,
+
+    price: p.lastSalePrice ?? undefined,
+    
     features: p.features
       ? Object.keys(p.features).filter((k) => p.features?.[k])
       : undefined,
