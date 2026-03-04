@@ -111,3 +111,19 @@ export type AiDeepDive = {
   rentRationale: string;
   memo: string;
 };
+
+export type RentcastMemoContext = {
+  rentEstimate?: number;
+  rentRangeLow?: number;
+  rentRangeHigh?: number;
+  valueEstimate?: number;
+  valueRangeLow?: number;
+  valueRangeHigh?: number;
+  subjectProperty?: {
+    bedrooms?: number;
+    bathrooms?: number;
+    squareFootage?: number;
+    propertyType?: string;
+    yearBuilt?: number;
+  };
+};
