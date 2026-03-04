@@ -1,4 +1,4 @@
-import type { ScenarioKey, ScenarioResult, UnderwritingInputs } from "../types";
+import type { MonteCarloSummary, ScenarioKey, ScenarioResult, UnderwritingInputs } from "../types";
 import { clamp } from "./format";
 import { SCENARIOS } from "../config";
 
@@ -140,4 +140,48 @@ export function sensitivityGrid(inputs: UnderwritingInputs) {
   );
 
   return { rentDeltas, vacancyDeltas, grid };
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+export function monteCarloSummary(inputs: UnderwritingInputs, iterations = 250): MonteCarloSummary {
+  const irrValues: number[] = [];
+  let dscrBelowOne = 0;
+  let negativeCash = 0;
+
+  for (let i = 0; i < iterations; i++) {
+    const rentShock = (Math.random() - 0.5) * 0.2;
+    const vacancyShock = (Math.random() - 0.5) * 0.06;
+    const expenseShock = (Math.random() - 0.5) * 0.1;
+    const appreciationShock = (Math.random() - 0.5) * 0.04;
+
+    const simInputs: UnderwritingInputs = {
+      ...inputs,
+      rentMonthly: Math.max(0, inputs.rentMonthly * (1 + rentShock)),
+      vacancyPct: clamp(inputs.vacancyPct + vacancyShock, 0, 0.5),
+      managementPct: clamp(inputs.managementPct * (1 + expenseShock), 0, 0.3),
+      repairsPct: clamp(inputs.repairsPct * (1 + expenseShock), 0, 0.3),
+      capexPct: clamp(inputs.capexPct * (1 + expenseShock), 0, 0.3),
+      appreciationPct: clamp(inputs.appreciationPct + appreciationShock, -0.1, 0.2),
+    };
+
+    const r = computeScenario(simInputs, "base");
+    irrValues.push(r.irr);
+    if (r.dscr < 1) dscrBelowOne += 1;
+    if (r.cashFlowMonthly < 0) negativeCash += 1;
+  }
+
+  irrValues.sort((a, b) => a - b);
+  return {
+    iterations,
+    p10Irr: percentile(irrValues, 0.1),
+    p50Irr: percentile(irrValues, 0.5),
+    p90Irr: percentile(irrValues, 0.9),
+    pNegativeCashFlow: negativeCash / iterations,
+    pDscrBelowOne: dscrBelowOne / iterations,
+  };
 }

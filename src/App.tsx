@@ -10,6 +10,7 @@ import type {
   Settings,
   TabsKey,
   UnderwritingInputs,
+  MonteCarloSummary,
 } from "./types";
 import { Tabs } from "./components/Tabs";
 import { Banner } from "./components/Banner";
@@ -42,9 +43,11 @@ import {
 import { extractPropertyFromText, runDeepDive } from "./lib/openai";
 import {
   computeScenario,
+  monteCarloSummary,
   sensitivityGrid,
   underwritingSummaryText,
 } from "./lib/underwriting";
+import { rankRentComps, weightedRentEstimate } from "./lib/compAnalysis";
 import { exportCsv, exportPdf, exportXlsx } from "./lib/exports";
 
 function defaultInputs(): UnderwritingInputs {
@@ -90,6 +93,7 @@ export function App() {
 
   const [scenarioView, setScenarioView] = useState<ScenarioKey>("base");
   const [ai, setAi] = useState<AiDeepDive | null>(null);
+  const [mcSummary, setMcSummary] = useState<MonteCarloSummary | null>(null);
 
   useEffect(() => setSettings(loadSettings()), []);
 
@@ -105,6 +109,14 @@ export function App() {
   const sensitivity = useMemo(() => {
     if (!inputs.purchasePrice || !inputs.rentMonthly) return null;
     return sensitivityGrid(inputs);
+  }, [inputs]);
+
+  useEffect(() => {
+    if (!inputs.purchasePrice || !inputs.rentMonthly) {
+      setMcSummary(null);
+      return;
+    }
+    setMcSummary(monteCarloSummary(inputs, 300));
   }, [inputs]);
 
   async function analyze() {
@@ -139,13 +151,25 @@ export function App() {
           address,
           settings.rentcastApiKey.trim()
         );
-        rentEstimate = rent.rent;
+        const rankedComps = rankRentComps(nextFacts, rent.comps);
+        const weightedRent = weightedRentEstimate(rankedComps);
+
+        rentEstimate = weightedRent ?? rent.rent;
         nextMemoContext.rentEstimate = rent.rent;
         nextMemoContext.rentRangeLow = rent.rentRangeLow;
         nextMemoContext.rentRangeHigh = rent.rentRangeHigh;
         nextMemoContext.subjectProperty = rent.subjectProperty;
-        setRentComps(rent.comps);
-        notes.push("Loaded rent estimate + rental comps from RentCast.");
+        nextMemoContext.compSummary = {
+          rentCompCount: rankedComps.length,
+          weightedRent,
+          averageCompScore: rankedComps.length
+            ? rankedComps.reduce((acc, c) => acc + (c.score ?? 0), 0) / rankedComps.length
+            : undefined,
+        };
+        setRentComps(rankedComps);
+        notes.push(
+          `Loaded rent estimate + rental comps from RentCast (${rankedComps.length} quality comps).`
+        );
         // RentCast value estimate + sales comps
 if (settings.rentcastApiKey.trim()) {
   const val = await fetchValueEstimateAndSalesComps(
@@ -159,6 +183,22 @@ if (settings.rentcastApiKey.trim()) {
   // Seed price if missing
 const looksTooLow =
   nextFacts.price && val.value ? nextFacts.price < val.value * 0.6 : false;
+
+const disagreementFlags: string[] = [];
+if (nextFacts.price && val.value) {
+  const variance = Math.abs(nextFacts.price - val.value) / val.value;
+  if (variance > 0.2) {
+    disagreementFlags.push(
+      `Listing/price input differs from AVM value by ${(variance * 100).toFixed(0)}%.`
+    );
+  }
+}
+if (nextMemoContext.rentRangeLow && nextMemoContext.rentRangeHigh && rentEstimate) {
+  if (rentEstimate < nextMemoContext.rentRangeLow || rentEstimate > nextMemoContext.rentRangeHigh) {
+    disagreementFlags.push("Weighted rent estimate falls outside RentCast rent range.");
+  }
+}
+nextMemoContext.disagreementFlags = disagreementFlags;
 
 if ((!nextFacts.price || looksTooLow) && val.value) {
   nextFacts.price = val.value;
@@ -454,6 +494,26 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
                   </ul>
                 </div>
               ) : null}
+
+              {memoContext.compSummary || memoContext.disagreementFlags?.length ? (
+                <div className="border rounded p-3 text-sm space-y-2">
+                  <div className="font-medium">Data confidence checks</div>
+                  {memoContext.compSummary ? (
+                    <div>
+                      Quality comps: {memoContext.compSummary.rentCompCount ?? 0} | Weighted rent: {money(memoContext.compSummary.weightedRent)} | Avg score: {num((memoContext.compSummary.averageCompScore ?? 0) * 100, 0)} / 100
+                    </div>
+                  ) : null}
+                  {memoContext.disagreementFlags?.length ? (
+                    <ul className="list-disc ml-5 text-amber-700">
+                      {memoContext.disagreementFlags.map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-green-700">No major data disagreements detected.</div>
+                  )}
+                </div>
+              ) : null}
             </div>
 
             <div className="border rounded p-3">
@@ -746,6 +806,22 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
                 </div>
               ) : null}
 
+              {mcSummary ? (
+                <div className="border rounded p-3 space-y-2">
+                  <div className="font-medium">Monte Carlo risk view</div>
+                  <div className="text-sm text-gray-700">
+                    {mcSummary.iterations} simulations based on rent/vacancy/expense/appreciation uncertainty.
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                    <div><span className="text-gray-600">IRR P10</span><div className="font-medium">{pct(mcSummary.p10Irr)}</div></div>
+                    <div><span className="text-gray-600">IRR P50</span><div className="font-medium">{pct(mcSummary.p50Irr)}</div></div>
+                    <div><span className="text-gray-600">IRR P90</span><div className="font-medium">{pct(mcSummary.p90Irr)}</div></div>
+                    <div><span className="text-gray-600">P(Neg cashflow)</span><div className="font-medium">{pct(mcSummary.pNegativeCashFlow)}</div></div>
+                    <div><span className="text-gray-600">P(DSCR &lt; 1.0)</span><div className="font-medium">{pct(mcSummary.pDscrBelowOne)}</div></div>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="border rounded p-3">
                 <div className="font-medium">Scenario defaults</div>
                 <div className="text-sm text-gray-700 mt-1">
@@ -769,11 +845,11 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
         {tab === "comps" && (
           <div className="space-y-4">
             <div className="border rounded p-3 space-y-2">
-              <div className="font-medium">Rental comps (3)</div>
+              <div className="font-medium">Rental comps (quality-ranked)</div>
               <RentalCompsTable comps={rentComps} />
             </div>
             <div className="border rounded p-3 space-y-2">
-              <div className="font-medium">Sales comps (manual, up to 3)</div>
+              <div className="font-medium">Sales comps (from RentCast + manual edits)</div>
               <SalesCompsTable comps={saleComps} onChange={setSaleComps} />
             </div>
           </div>
@@ -807,6 +883,19 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
             {ai ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border rounded p-3 space-y-2">
+                  <div className="font-medium">Investment scorecard</div>
+                  <div className="text-sm">Recommendation: <span className="font-semibold uppercase">{ai.recommendation}</span></div>
+                  <div className="text-sm">Buy box fit: <span className="font-medium">{ai.buyBoxFit}</span></div>
+                  <div className="text-sm">Overall score: <span className="font-medium">{num(ai.overallScore, 1)} / 100</span></div>
+                  <div className="text-sm">Confidence: <span className="font-medium">{num(ai.confidenceScore, 1)} / 100</span></div>
+                  <div className="text-sm text-gray-700">Key drivers</div>
+                  <ul className="list-disc ml-5 text-sm">
+                    {ai.keyDrivers.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="border rounded p-3 space-y-2">
                   <div className="font-medium">Highlights</div>
                   <ul className="list-disc ml-5 text-sm">
                     {ai.highlights.map((h, i) => (
@@ -827,6 +916,24 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
                   </div>
                 </div>
                 <div className="border rounded p-3 md:col-span-2 space-y-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <div className="font-medium">Required due diligence</div>
+                      <ul className="list-disc ml-5 text-sm">
+                        {ai.dueDiligence.map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="font-medium">Deal killers</div>
+                      <ul className="list-disc ml-5 text-sm">
+                        {ai.dealKillers.map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
                   <div className="font-medium">Investment memo</div>
                   <div className="text-sm whitespace-pre-wrap">{ai.memo}</div>
                 </div>

@@ -7,6 +7,11 @@ import type {
 } from "../types";
 
 const BASE = "https://api.rentcast.io/v1";
+const rentcastCache = new Map<string, any>();
+
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function rentcastGet<T>(
   path: string,
@@ -16,18 +21,41 @@ async function rentcastGet<T>(
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      "X-Api-Key": apiKey,
-      Accept: "application/json",
-    },
-  });
+  const cacheKey = url.toString();
+  if (rentcastCache.has(cacheKey)) return rentcastCache.get(cacheKey) as T;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`RentCast error ${res.status}: ${text || res.statusText}`);
+  let lastError = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await fetch(cacheKey, {
+        headers: {
+          "X-Api-Key": apiKey,
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        lastError = `RentCast error ${res.status}: ${text || res.statusText}`;
+        if (res.status < 500 || attempt === 3) throw new Error(lastError);
+        await wait(250 * attempt);
+        continue;
+      }
+      const data = (await res.json()) as T;
+      rentcastCache.set(cacheKey, data);
+      return data;
+    } catch (err: any) {
+      clearTimeout(timer);
+      lastError = err?.message || "unknown error";
+      if (attempt === 3) throw new Error(`RentCast request failed after retries: ${lastError}`);
+      await wait(250 * attempt);
+    }
   }
-  return (await res.json()) as T;
+  throw new Error(`RentCast request failed: ${lastError}`);
 }
 
 export async function fetchPropertyFactsFromRentcast(

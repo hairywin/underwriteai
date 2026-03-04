@@ -37,6 +37,8 @@ export type RentComp = {
   rent?: number;
   url?: string;
   source?: string;
+  score?: number;
+  scoreReason?: string;
 };
 
 export type SaleComp = {
@@ -110,6 +112,13 @@ export type AiDeepDive = {
   redFlags: string[];
   rentRationale: string;
   memo: string;
+  overallScore: number;
+  confidenceScore: number;
+  buyBoxFit: "strong" | "moderate" | "weak";
+  recommendation: "buy" | "watch" | "pass";
+  keyDrivers: string[];
+  dueDiligence: string[];
+  dealKillers: string[];
 };
 
 export type RentcastMemoContext = {
@@ -126,4 +135,19 @@ export type RentcastMemoContext = {
     propertyType?: string;
     yearBuilt?: number;
   };
+  compSummary?: {
+    rentCompCount?: number;
+    weightedRent?: number;
+    averageCompScore?: number;
+  };
+  disagreementFlags?: string[];
+};
+
+export type MonteCarloSummary = {
+  iterations: number;
+  p10Irr: number;
+  p50Irr: number;
+  p90Irr: number;
+  pNegativeCashFlow: number;
+  pDscrBelowOne: number;
 };
