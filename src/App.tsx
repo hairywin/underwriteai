@@ -147,10 +147,13 @@ if (settings.rentcastApiKey.trim()) {
   );
 
   // Seed price if missing
-  if (!nextFacts.price && val.value) {
-    nextFacts.price = val.value;
-    notes.push("Seeded purchase price from RentCast /avm/value estimate.");
-  }
+const looksTooLow =
+  nextFacts.price && val.value ? nextFacts.price < val.value * 0.6 : false;
+
+if ((!nextFacts.price || looksTooLow) && val.value) {
+  nextFacts.price = val.value;
+  notes.push("Seeded purchase price from RentCast /avm/value estimate.");
+}
 
   setSaleComps(val.comps);
   notes.push("Loaded sales comps from RentCast /avm/value.");
