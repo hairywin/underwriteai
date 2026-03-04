@@ -1,6 +1,7 @@
 import type {
   PropertyFacts,
   RentComp,
+  RentcastMemoContext,
   RentcastRentEstimateResponse,
   SaleComp,
 } from "../types";
@@ -67,6 +68,9 @@ export async function fetchRentEstimateAndComps(
   apiKey: string
 ): Promise<{
   rent?: number;
+  rentRangeLow?: number;
+  rentRangeHigh?: number;
+  subjectProperty?: RentcastMemoContext["subjectProperty"];
   comps: RentComp[];
   raw: RentcastRentEstimateResponse;
 }> {
@@ -75,13 +79,13 @@ export async function fetchRentEstimateAndComps(
     apiKey,
     {
       address,
-      compCount: "3",
+      compCount: "10",
       maxRadius: "1", // miles (best-effort)
     }
   );
 
   const compsRaw = (raw as any).comparables ?? [];
-  const comps: RentComp[] = compsRaw.slice(0, 3).map((c: any) => ({
+  const comps: RentComp[] = compsRaw.slice(0, 10).map((c: any) => ({
     address: c.formattedAddress || c.address,
     city: c.city,
     state: c.state,
@@ -97,7 +101,22 @@ export async function fetchRentEstimateAndComps(
     source: "RentCast AVM comparable",
   }));
 
-  return { rent: (raw as any).rent, comps, raw };
+  return {
+    rent: (raw as any).rent,
+    rentRangeLow: (raw as any).rentRangeLow ?? (raw as any).lowerRentEstimate ?? undefined,
+    rentRangeHigh: (raw as any).rentRangeHigh ?? (raw as any).upperRentEstimate ?? undefined,
+    subjectProperty: raw?.subjectProperty
+      ? {
+          bedrooms: raw.subjectProperty.bedrooms,
+          bathrooms: raw.subjectProperty.bathrooms,
+          squareFootage: raw.subjectProperty.squareFootage,
+          propertyType: raw.subjectProperty.propertyType,
+          yearBuilt: raw.subjectProperty.yearBuilt,
+        }
+      : undefined,
+    comps,
+    raw,
+  };
 }
 
 /**
@@ -109,12 +128,14 @@ export async function fetchValueEstimateAndSalesComps(
   apiKey: string
 ): Promise<{
   value?: number;
+  valueRangeLow?: number;
+  valueRangeHigh?: number;
   comps: SaleComp[];
   raw: any;
 }> {
   const raw = await rentcastGet<any>("/avm/value", apiKey, {
     address,
-    compCount: "3",
+    compCount: "10",
     maxRadius: "1", // miles (best-effort)
   });
 
@@ -129,15 +150,21 @@ export async function fetchValueEstimateAndSalesComps(
 
   const compsRaw = raw?.comparables ?? raw?.comparablesSale ?? raw?.comps ?? [];
   const comps: SaleComp[] = (Array.isArray(compsRaw) ? compsRaw : [])
-    .slice(0, 3)
+    .slice(0, 10)
     .map((c: any) => ({
       address: c.formattedAddress || c.address || "",
       price: c.price ?? c.soldPrice ?? c.lastSalePrice ?? c.value ?? 0,
       bedrooms: c.bedrooms ?? c.beds ?? null,
       bathrooms: c.bathrooms ?? c.baths ?? null,
       squareFootage: c.squareFootage ?? c.sqft ?? null,
-      link: c.url ?? c.listingUrl ?? "",
+      url: c.url ?? c.listingUrl ?? "",
     }));
 
-  return { value, comps, raw };
+  return {
+    value,
+    valueRangeLow: raw?.priceRangeLow ?? raw?.valueRangeLow ?? raw?.lowerValueEstimate ?? undefined,
+    valueRangeHigh: raw?.priceRangeHigh ?? raw?.valueRangeHigh ?? raw?.upperValueEstimate ?? undefined,
+    comps,
+    raw,
+  };
 }

@@ -1,5 +1,5 @@
 import { DEFAULT_OPENAI_MODEL, OPENAI_RESPONSES_URL } from "../config";
-import type { AiDeepDive, PropertyFacts, RentComp } from "../types";
+import type { AiDeepDive, PropertyFacts, RentComp, RentcastMemoContext, SaleComp } from "../types";
 
 async function openaiPost(apiKey: string, body: any) {
   const res = await fetch(OPENAI_RESPONSES_URL, {
@@ -132,6 +132,8 @@ export async function runDeepDive(args: {
   facts: PropertyFacts;
   rentComps: RentComp[];
   rentEstimate?: number;
+  salesComps: SaleComp[];
+  memoContext?: RentcastMemoContext;
   underwritingSummary: string; // short plain text block
 }): Promise<AiDeepDive> {
   const schema = {
@@ -160,6 +162,17 @@ export async function runDeepDive(args: {
     )
     .join("\n");
 
+  const salesCompLines = args.salesComps
+    .map(
+      (c, i) =>
+        `Sale comp ${i + 1}: ${c.address || ""} | price=${c.price ?? "?"} | beds=${
+          c.bedrooms ?? "?"
+        } baths=${c.bathrooms ?? "?"} sqft=${c.squareFootage ?? "?"} | link=${
+          c.url || "n/a"
+        }`
+    )
+    .join("\n");
+
   const resp = await openaiPost(args.apiKey, {
     model: args.model || DEFAULT_OPENAI_MODEL,
     max_output_tokens: 1200,
@@ -172,14 +185,33 @@ export async function runDeepDive(args: {
             text:
               `You are underwriting a real estate investment.\n\n` +
               `Property facts (JSON):\n${JSON.stringify(args.facts, null, 2)}\n\n` +
-              `Rent estimate (if available): ${args.rentEstimate ?? "n/a"}\n` +
-              `Rental comps (must cite at least 2 comps by address and link in the rent rationale):\n${compLines}\n\n` +
-              `Underwriting summary:\n${args.underwritingSummary}\n\n` +
-              `Return:\n` +
-              `- highlights: bullet strings\n` +
-              `- redFlags: bullet strings\n` +
-              `- rentRationale: short paragraph referencing comps shown\n` +
-              `- memo: ~1 page memo with sections: Overview, Assumptions, Scenario Results, Comps Summary, Risks, Next Steps.`,
+              `Rent estimate (if available): ${args.rentEstimate ?? "n/a"}
+` +
+              `Rental comps (must cite at least 2 comps by address and link in the rent rationale):
+${compLines}
+
+` +
+              `Sales comps (for valuation support):
+${salesCompLines || "n/a"}
+
+` +
+              `RentCast memo context (JSON, optional):
+${JSON.stringify(args.memoContext || {}, null, 2)}
+
+` +
+              `Underwriting summary:
+${args.underwritingSummary}
+
+` +
+              `Return:
+` +
+              `- highlights: bullet strings
+` +
+              `- redFlags: bullet strings
+` +
+              `- rentRationale: short paragraph referencing comps shown
+` +
+              `- memo: ~1 page memo with sections: Overview, Assumptions, Scenario Results, Comps Summary, Risks, Next Steps. Include explicit RentCast rent range and value range commentary whenever present in context.`,
           },
         ],
       },

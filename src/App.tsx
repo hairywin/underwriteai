@@ -3,6 +3,7 @@ import type {
   AiDeepDive,
   PropertyFacts,
   RentComp,
+  RentcastMemoContext,
   SaleComp,
   ScenarioKey,
   ScenarioResult,
@@ -82,6 +83,7 @@ export function App() {
   const [rentComps, setRentComps] = useState<RentComp[]>([]);
   const [saleComps, setSaleComps] = useState<SaleComp[]>([]);
   const [inputs, setInputs] = useState<UnderwritingInputs>(defaultInputs());
+  const [memoContext, setMemoContext] = useState<RentcastMemoContext>({});
 
   const [manualUrl, setManualUrl] = useState("");
   const [manualText, setManualText] = useState("");
@@ -131,12 +133,17 @@ export function App() {
 
       // RentCast rent estimate + comps
       let rentEstimate: number | undefined = undefined;
+      const nextMemoContext: RentcastMemoContext = {};
       if (settings.rentcastApiKey.trim()) {
         const rent = await fetchRentEstimateAndComps(
           address,
           settings.rentcastApiKey.trim()
         );
         rentEstimate = rent.rent;
+        nextMemoContext.rentEstimate = rent.rent;
+        nextMemoContext.rentRangeLow = rent.rentRangeLow;
+        nextMemoContext.rentRangeHigh = rent.rentRangeHigh;
+        nextMemoContext.subjectProperty = rent.subjectProperty;
         setRentComps(rent.comps);
         notes.push("Loaded rent estimate + rental comps from RentCast.");
         // RentCast value estimate + sales comps
@@ -145,6 +152,9 @@ if (settings.rentcastApiKey.trim()) {
     address,
     settings.rentcastApiKey.trim()
   );
+  nextMemoContext.valueEstimate = val.value;
+  nextMemoContext.valueRangeLow = val.valueRangeLow;
+  nextMemoContext.valueRangeHigh = val.valueRangeHigh;
 
   // Seed price if missing
 const looksTooLow =
@@ -167,6 +177,7 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
 
       nextFacts.sourceNotes = [...(nextFacts.sourceNotes || []), ...notes];
       setFacts(nextFacts);
+      setMemoContext(nextMemoContext);
 
       // Seed underwriting inputs from best available
       const price = nextFacts.price ?? 0;
@@ -283,6 +294,8 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
         apiKey: settings.openaiApiKey.trim(),
         facts,
         rentComps,
+        salesComps: saleComps,
+        memoContext,
         rentEstimate: inputs.rentMonthly,
         underwritingSummary: summary,
       });
@@ -335,7 +348,7 @@ if ((!nextFacts.price || looksTooLow) && val.value) {
           </div>
           <div className="text-xs text-gray-600 mt-1">
             Tip: For best results, set a RentCast key in Settings. RentCast
-            endpoints used: /properties and /avm/rent/long-term.
+            endpoints used: /properties, /avm/rent/long-term, and /avm/value.
           </div>
         </div>
       </div>
