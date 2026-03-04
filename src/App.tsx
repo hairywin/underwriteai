@@ -36,6 +36,7 @@ import { money, num, pct } from "./lib/format";
 import {
   fetchPropertyFactsFromRentcast,
   fetchRentEstimateAndComps,
+  fetchValueEstimateAndSalesComps,
 } from "./lib/rentcast";
 import { extractPropertyFromText, runDeepDive } from "./lib/openai";
 import {
@@ -138,6 +139,24 @@ export function App() {
         rentEstimate = rent.rent;
         setRentComps(rent.comps);
         notes.push("Loaded rent estimate + rental comps from RentCast.");
+        // RentCast value estimate + sales comps
+if (settings.rentcastApiKey.trim()) {
+  const val = await fetchValueEstimateAndSalesComps(
+    address,
+    settings.rentcastApiKey.trim()
+  );
+
+  // Seed price if missing
+  if (!nextFacts.price && val.value) {
+    nextFacts.price = val.value;
+    notes.push("Seeded purchase price from RentCast /avm/value estimate.");
+  }
+
+  setSaleComps(val.comps);
+  notes.push("Loaded sales comps from RentCast /avm/value.");
+} else {
+  setSaleComps([]);
+}
       } else {
         setRentComps([]);
         notes.push("RentCast key not set; skipping rent comps.");
