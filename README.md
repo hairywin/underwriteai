@@ -45,3 +45,11 @@ If Census key is missing, underwriting continues and neighborhood metrics are ma
 - Tool retries with broader search params.
 - If still unavailable, tool falls back to listing price, then comps-derived median $/sqft when possible.
 - If valuation remains unavailable, underwriting still runs with rent-side assumptions and surfaces warnings.
+
+
+## Manual validation for GitHub Pages (Census JSONP)
+1. Deploy the app to GitHub Pages.
+2. Enter a valid US address (for example, `15937 Tobin Way, Sherman Oaks, CA 91403`) and click **Fetch RentCast data**.
+3. Confirm underwriting continues after geocoding (coordinates populate and RentCast/FRED requests run).
+4. Open DevTools **Network** + **Console** and verify there are no Census CORS/preflight errors.
+5. If geocoding fails, confirm the UI shows `Geocoder request failed` with the detailed reason and request URL.
