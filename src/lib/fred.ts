@@ -1,3 +1,4 @@
+import { httpFetch } from "./http.js";
 const FRED_BASE = "https://api.stlouisfed.org/fred/series/observations";
 
 async function fetchSeries(seriesId: string, apiKey: string) {
@@ -8,12 +9,7 @@ async function fetchSeries(seriesId: string, apiKey: string) {
   url.searchParams.set("sort_order", "desc");
   url.searchParams.set("limit", "12");
 
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 400 || res.status === 403) throw new Error("FRED key invalid.");
-    throw new Error(`FRED error ${res.status}: ${text || res.statusText}`);
-  }
+  const res = await httpFetch(url.toString(), {}, "FRED series observations");
   const data = (await res.json()) as { observations?: { value: string; date: string }[] };
   const obs = data.observations ?? [];
   const valid = obs.find((o) => o.value !== ".");

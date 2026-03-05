@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Chat } from "./components/Chat";
+import { ErrorPanel } from "./components/ErrorPanel";
 import { HoldPeriodCharts, ScenarioCharts, SensitivityHeatmap } from "./components/Charts";
 import { Scorecard } from "./components/Scorecard";
 import { Tooltip } from "./components/Tooltip";
@@ -7,6 +8,7 @@ import { DEFAULTS } from "./config";
 import { exportCsv, exportPdf, exportXlsx } from "./lib/exports";
 import { formatCurrency, formatPercent } from "./lib/format";
 import { runDealChat, runDeepDive } from "./lib/openai";
+import { HttpRequestError, type HttpErrorReport } from "./lib/http";
 import { runUnderwritingPipeline } from "./lib/pipeline";
 import { clearSettings, defaultSettings, loadSettings, saveSettings } from "./lib/storage";
 import { buildHoldSeries, buildSensitivity, computeScenario, dealRiskScore, maxLoanFromDscr, maxOfferFromCoc } from "./lib/underwriting";
@@ -71,6 +73,7 @@ export function App() {
   const [inputs, setInputs] = useState<UnderwritingInputs>(defaultInputs());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [errorReport, setErrorReport] = useState<HttpErrorReport | null>(null);
   const [valuationWarnings, setValuationWarnings] = useState<string[]>([]);
   const [valuationStatus, setValuationStatus] = useState<"ok" | "unavailable" | null>(null);
   const [marketRate, setMarketRate] = useState<number>();
@@ -90,9 +93,20 @@ export function App() {
 
   const context: DealContext = { facts, rentComps, saleComps, assumptions: inputs, scenarios: results, marketRate, inflationRate };
 
+  function captureError(e: any, fallbackMessage: string) {
+    if (e instanceof HttpRequestError) {
+      setError("");
+      setErrorReport(e.report);
+      return;
+    }
+    setErrorReport(null);
+    setError(e?.message || fallbackMessage);
+  }
+
   async function analyzeDeal() {
     setBusy("Running underwriting pipeline (geocode → data sources)...");
     setError("");
+    setErrorReport(null);
     setValuationWarnings([]);
     setValuationStatus(null);
     try {
@@ -112,7 +126,7 @@ export function App() {
       setSaleComps([]);
       setStep("underwrite");
     } catch (e: any) {
-      setError(e.message || "Analyze failed.");
+      captureError(e, "Analyze failed.");
     } finally {
       setBusy("");
     }
@@ -121,12 +135,13 @@ export function App() {
   async function generateMemo() {
     setBusy("Generating memo...");
     setError("");
+    setErrorReport(null);
     try {
       if (!settings.openaiApiKey.trim()) throw new Error("OpenAI key required in Settings.");
       const out = await runDeepDive({ apiKey: settings.openaiApiKey.trim(), model: settings.defaultModel, context });
       setMemo(out);
     } catch (e: any) {
-      setError(e.message || "Memo failed.");
+      captureError(e, "Memo failed.");
     } finally {
       setBusy("");
     }
@@ -135,6 +150,7 @@ export function App() {
   async function askAI(question: string) {
     setBusy("Thinking...");
     setError("");
+    setErrorReport(null);
     try {
       const user: ChatMessage = { role: "user", text: question };
       const next = [...messages, user];
@@ -142,7 +158,7 @@ export function App() {
       const answer = await runDealChat({ apiKey: settings.openaiApiKey, model: settings.defaultModel, context, messages: next, question });
       setMessages([...next, { role: "assistant", text: answer }]);
     } catch (e: any) {
-      setError(e.message || "Chat failed.");
+      captureError(e, "Chat failed.");
     } finally {
       setBusy("");
     }
@@ -156,8 +172,9 @@ export function App() {
       <div className="flex flex-wrap gap-2">{STEPS.map((s) => <button key={s} onClick={() => setStep(s)} className={`px-3 py-2 rounded border ${step === s ? "bg-black text-white" : "bg-white"}`}>{s.replace("_", " ")}</button>)}</div>
 
       {busy && <div className="text-sm bg-blue-50 p-2 rounded">{busy}</div>}
+      {errorReport && <ErrorPanel title={`${errorReport.contextLabel} failed`} report={errorReport} />}
       {error && <div className="text-sm bg-red-50 text-red-700 p-2 rounded">{error}</div>}
-      {!error && valuationWarnings.length > 0 && (
+      {!error && !errorReport && valuationWarnings.length > 0 && (
         <div className={`text-sm p-2 rounded ${valuationStatus === "unavailable" ? "bg-amber-50 text-amber-900" : "bg-yellow-50 text-yellow-900"}`}>
           {valuationWarnings[valuationWarnings.length - 1]}
         </div>

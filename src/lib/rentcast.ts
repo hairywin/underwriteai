@@ -1,13 +1,9 @@
 import type { PropertyFacts, RentComp, SaleComp } from "../types";
+import { HttpRequestError, httpFetch } from "./http.js";
 
 const BASE = "https://api.rentcast.io/v1";
 const INSUFFICIENT_COMPS_MESSAGE = "Unable to calculate AVM due to insufficient comparables matching request parameters";
 
-const DEFAULT_TIMEOUT_MS = 8000;
-
-type RcRequestOptions = {
-  timeoutMs?: number;
-};
 
 type ValueAttempt = {
   maxRadius: string;
@@ -37,26 +33,6 @@ export type ValuationResult = {
   comps: SaleComp[];
 };
 
-class RentcastHttpError extends Error {
-  status: number;
-  body: string;
-
-  constructor(status: number, body: string) {
-    super(toFriendlyRentcastError(status, body));
-    this.status = status;
-    this.body = body;
-  }
-}
-
-function toFriendlyRentcastError(status: number, body: string) {
-  if (status === 401 || status === 403) return "RentCast key invalid or unauthorized.";
-  if (status === 429) return "RentCast rate limited. Please retry in a moment.";
-  if (status === 400 && body.includes(INSUFFICIENT_COMPS_MESSAGE)) {
-    return "Valuation unavailable (not enough comparable sales nearby). We expanded the search area automatically; if this persists, try a nearby address or use listing price.";
-  }
-  return `RentCast error ${status}: ${body || "Unexpected API response."}`;
-}
-
 function normalizeAddress(address: string) {
   let normalized = address.replace(/\s+/g, " ").trim();
   normalized = normalized.replace(/\s+,/g, ",");
@@ -79,10 +55,10 @@ function normalizeAddress(address: string) {
 }
 
 function isInsufficientCompsError(error: unknown) {
-  return error instanceof RentcastHttpError && error.status === 400 && error.body.includes(INSUFFICIENT_COMPS_MESSAGE);
+  return error instanceof HttpRequestError && error.report.status === 400 && (error.report.bodyExcerpt || "").includes(INSUFFICIENT_COMPS_MESSAGE);
 }
 
-async function rcGet<T>(path: string, apiKey: string, params: Record<string, string>, options: RcRequestOptions = {}) {
+async function rcGet<T>(path: string, apiKey: string, params: Record<string, string>) {
   const buildUrl = (includeApiKeyParam = false) => {
     const url = new URL(`${BASE}${path}`);
     Object.entries(params).forEach(([k, v]) => {
@@ -92,33 +68,24 @@ async function rcGet<T>(path: string, apiKey: string, params: Record<string, str
     return url;
   };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const request = async (useHeaderAuth: boolean) => {
-    const res = await fetch(buildUrl(!useHeaderAuth).toString(), {
-      headers: useHeaderAuth ? { "X-Api-Key": apiKey } : undefined,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new RentcastHttpError(res.status, await res.text());
+    const res = await httpFetch(
+      buildUrl(!useHeaderAuth).toString(),
+      {
+        headers: useHeaderAuth ? { "X-Api-Key": apiKey } : undefined,
+      },
+      "RentCast",
+    );
     return (await res.json()) as T;
   };
 
   try {
-    try {
-      return await request(true);
-    } catch (error: any) {
-      const isNetworkError = error?.name === "TypeError" || /failed to fetch/i.test(String(error?.message || ""));
-      if (!isNetworkError) throw error;
-      // Some browser origins reject preflight for custom headers; query param auth avoids that preflight.
-      return await request(false);
-    }
-  } catch (error: any) {
-    if (error?.name === "AbortError") {
-      throw new Error("RentCast request timed out. Please retry.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+    return await request(true);
+  } catch (error) {
+    const networkLike = error instanceof HttpRequestError && error.report.label === "Likely CORS blocked or network failure";
+    if (!networkLike) throw error;
+    // Some browser origins reject preflight for custom headers; query param auth avoids that preflight.
+    return await request(false);
   }
 }
 
@@ -218,7 +185,7 @@ export async function fetchValueData(
   for (let i = 0; i < VALUE_ATTEMPTS.length; i += 1) {
     const attempt = VALUE_ATTEMPTS[i];
     try {
-      const raw = await rcGet<any>("/avm/value", apiKey, { ...requestBase, ...attempt }, { timeoutMs: 5000 });
+      const raw = await rcGet<any>("/avm/value", apiKey, { ...requestBase, ...attempt });
       const comps = mapSaleComps(raw);
       return {
         valuation: { status: "ok", source: "rentcast_avm", warnings },

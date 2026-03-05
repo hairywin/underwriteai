@@ -1,5 +1,6 @@
 import { localCache, stableHash } from "./cache.js";
 import type { GeocodeResult } from "./geocode.js";
+import { httpFetch } from "./http.js";
 
 const BASE = "https://api.census.gov/data";
 const DEFAULT_YEAR = "2022";
@@ -41,8 +42,7 @@ function toNum(value: string | undefined) {
 
 async function fetchAcs(params: URLSearchParams) {
   const url = `${BASE}/${DEFAULT_YEAR}/${DATASET}?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Census Data API error ${res.status}`);
+  const res = await httpFetch(url, {}, "US Census ACS");
   return (await res.json()) as string[][];
 }
 
