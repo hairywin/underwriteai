@@ -71,6 +71,8 @@ export function App() {
   const [inputs, setInputs] = useState<UnderwritingInputs>(defaultInputs());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [valuationWarnings, setValuationWarnings] = useState<string[]>([]);
+  const [valuationStatus, setValuationStatus] = useState<"ok" | "unavailable" | null>(null);
   const [marketRate, setMarketRate] = useState<number>();
   const [inflationRate, setInflationRate] = useState<number>();
   const [memo, setMemo] = useState<AiDeepDive | null>(null);
@@ -91,17 +93,24 @@ export function App() {
   async function analyzeDeal() {
     setBusy("Loading property + comp data...");
     setError("");
+    setValuationWarnings([]);
+    setValuationStatus(null);
     try {
       if (!settings.rentcastApiKey.trim()) throw new Error("RentCast key required in Settings.");
       if (!address.trim()) throw new Error("Address is required.");
-      const [f, rent, value] = await Promise.all([
-        fetchPropertyFacts(address, settings.rentcastApiKey.trim()),
+      const f = await fetchPropertyFacts(address, settings.rentcastApiKey.trim());
+      const [rent, value] = await Promise.all([
         fetchRentData(address, settings.rentcastApiKey.trim()),
-        fetchValueData(address, settings.rentcastApiKey.trim()),
+        fetchValueData(address, settings.rentcastApiKey.trim(), {
+          listingPrice: inputs.purchasePrice > 0 ? inputs.purchasePrice : undefined,
+          subjectSquareFootage: f?.squareFootage,
+        }),
       ]);
       setFacts(f || { address });
       setRentComps(rent.comps);
       setSaleComps(value.comps);
+      setValuationWarnings(value.valuation.warnings || []);
+      setValuationStatus(value.valuation.status);
       setInputs((prev) => ({
         ...prev,
         purchasePrice: prev.purchasePrice || value.valueEstimate || f?.estimatedValue || 0,
@@ -169,6 +178,11 @@ export function App() {
 
       {busy && <div className="text-sm bg-blue-50 p-2 rounded">{busy}</div>}
       {error && <div className="text-sm bg-red-50 text-red-700 p-2 rounded">{error}</div>}
+      {!error && valuationWarnings.length > 0 && (
+        <div className={`text-sm p-2 rounded ${valuationStatus === "unavailable" ? "bg-amber-50 text-amber-900" : "bg-yellow-50 text-yellow-900"}`}>
+          {valuationWarnings[valuationWarnings.length - 1]}
+        </div>
+      )}
 
       <div id="report-root" className="space-y-4">
         {step === "deal" && (
