@@ -1,187 +1,115 @@
-import type { MonteCarloSummary, ScenarioKey, ScenarioResult, UnderwritingInputs } from "../types";
-import { clamp } from "./format";
 import { SCENARIOS } from "../config";
+import type { HoldSeriesPoint, ScenarioKey, ScenarioResult, SensitivityGrid, UnderwritingInputs } from "../types";
 
-function pmt(rateMonthly: number, n: number, pv: number) {
-  if (rateMonthly === 0) return pv / n;
-  const r = rateMonthly;
-  return (r * pv) / (1 - Math.pow(1 + r, -n));
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+function monthlyDebtService(loanAmount: number, annualRate: number, termYears: number, interestOnly: boolean) {
+  if (loanAmount <= 0) return 0;
+  const rm = annualRate / 12;
+  if (interestOnly) return loanAmount * rm;
+  const n = termYears * 12;
+  return rm === 0 ? loanAmount / n : (loanAmount * rm) / (1 - Math.pow(1 + rm, -n));
 }
 
-function amortBalance(pv: number, rateMonthly: number, payment: number, months: number) {
-  let bal = pv;
-  for (let i = 0; i < months; i++) {
-    const interest = bal * rateMonthly;
-    const principal = payment - interest;
-    bal = Math.max(0, bal - principal);
+export function effectiveRent(inputs: UnderwritingInputs) {
+  if (inputs.propertyType === "multifamily" && inputs.useUnitMix) {
+    return inputs.unitMix.reduce((sum, u) => sum + u.count * u.avgRent, 0);
   }
-  return bal;
-}
-
-function irr(cashflows: number[]): number {
-  // simple Newton-Raphson IRR (monthly cashflows), returns annualized
-  let x = 0.01; // monthly guess
-  for (let iter = 0; iter < 50; iter++) {
-    let f = 0;
-    let df = 0;
-    for (let t = 0; t < cashflows.length; t++) {
-      const denom = Math.pow(1 + x, t);
-      f += cashflows[t] / denom;
-      df += (-t * cashflows[t]) / (denom * (1 + x));
-    }
-    const step = f / df;
-    x = x - step;
-    if (Math.abs(step) < 1e-7) break;
-  }
-  const annual = Math.pow(1 + x, 12) - 1;
-  return annual;
+  return inputs.rentMonthly;
 }
 
 export function computeScenario(inputs: UnderwritingInputs, scenario: ScenarioKey): ScenarioResult {
   const s = SCENARIOS[scenario];
-  const rentMonthly = inputs.rentMonthly * (1 + s.rentAdjPct);
-  const vacancyPct = clamp(inputs.vacancyPct + s.vacancyAdjPts, 0, 0.4);
+  const rent = effectiveRent(inputs) * (1 + s.rentDelta);
+  const grossIncomeMonthly = rent + inputs.otherIncomeMonthly;
+  const vacancy = clamp(inputs.vacancyPct + s.vacancyDelta, 0, 0.5);
+  const effectiveGrossMonthly = grossIncomeMonthly * (1 - vacancy);
 
-  const vacancyLoss = rentMonthly * vacancyPct;
-  const effectiveGrossMonthly = rentMonthly - vacancyLoss;
+  const ratioExpenses = inputs.useExpenseRatio ? effectiveGrossMonthly * inputs.expenseRatioPct : 0;
+  const variablePct =
+    (inputs.includeManagement ? inputs.managementPct : 0) +
+    inputs.repairsPct +
+    (inputs.includeCapex ? inputs.capexPct : 0) +
+    (inputs.includeReserves ? inputs.reservePct : 0);
+  const variableExpenses = inputs.useExpenseRatio ? 0 : grossIncomeMonthly * variablePct;
+  const fixedExpenses = inputs.propertyTaxAnnual / 12 + inputs.insuranceAnnual / 12 + inputs.hoaMonthly + inputs.otherMonthly;
+  const expensesMonthly = (ratioExpenses + variableExpenses + fixedExpenses) * (1 + s.expenseDelta);
 
-  const variableOpex =
-    rentMonthly *
-    (inputs.managementPct + inputs.repairsPct + inputs.capexPct) *
-    (1 + s.expenseAdjPct);
-
-  const fixedOpex =
-    inputs.hoaMonthly +
-    inputs.otherMonthly +
-    inputs.propertyTaxAnnual / 12 +
-    inputs.insuranceAnnual / 12;
-
-  const opexMonthly = variableOpex + fixedOpex;
-  const noiMonthly = effectiveGrossMonthly - opexMonthly;
-
-  const downPayment = inputs.purchasePrice * inputs.downPaymentPct;
-  const loanAmount = Math.max(0, inputs.purchasePrice - downPayment);
-  const rateMonthly = inputs.interestRate / 12;
-  const n = Math.round(inputs.termYears * 12);
-
-  let debtServiceMonthly = 0;
-  if (loanAmount > 0) {
-    if (inputs.interestOnly) debtServiceMonthly = loanAmount * rateMonthly;
-    else debtServiceMonthly = pmt(rateMonthly, n, loanAmount);
-  }
-
+  const noiMonthly = effectiveGrossMonthly - expensesMonthly;
+  const loanAmount = inputs.purchasePrice * (1 - inputs.downPaymentPct);
+  const annualRate = clamp(inputs.interestRate + s.rateDelta, 0, 0.2);
+  const debtServiceMonthly = monthlyDebtService(loanAmount, annualRate, inputs.termYears, inputs.interestOnly);
   const cashFlowMonthly = noiMonthly - debtServiceMonthly;
 
-  const capRate = (noiMonthly * 12) / inputs.purchasePrice;
-  const cashInvested = downPayment + inputs.closingCosts + inputs.purchasePrice * inputs.pointsPct;
-  const cashOnCash = cashInvested > 0 ? (cashFlowMonthly * 12) / cashInvested : 0;
-
-  const dscr = debtServiceMonthly > 0 ? noiMonthly / debtServiceMonthly : Infinity;
-  const breakEvenOcc = rentMonthly > 0 ? clamp((opexMonthly + debtServiceMonthly) / rentMonthly, 0, 2) : 0;
-
-  // IRR / equity build (simple hold model)
-  const monthsHold = Math.max(1, Math.round(inputs.holdYears * 12));
-  const salePrice = inputs.purchasePrice * Math.pow(1 + inputs.appreciationPct, inputs.holdYears);
-  const saleCosts = salePrice * inputs.saleCostsPct;
-  const netSaleProceedsBeforeDebt = salePrice - saleCosts;
-
-  const payment = (!inputs.interestOnly && loanAmount > 0) ? pmt(rateMonthly, n, loanAmount) : 0;
-  const balanceAtSale =
-    loanAmount <= 0 ? 0 :
-    inputs.interestOnly ? loanAmount :
-    amortBalance(loanAmount, rateMonthly, payment, monthsHold);
-
-  const netSaleProceeds = netSaleProceedsBeforeDebt - balanceAtSale;
-  const equityBuild = Math.max(0, loanAmount - balanceAtSale);
-
-  const cashflows: number[] = [];
-  cashflows.push(-cashInvested);
-  for (let i = 0; i < monthsHold; i++) cashflows.push(cashFlowMonthly);
-  cashflows[cashflows.length - 1] += netSaleProceeds;
-
-  const irrAnnual = irr(cashflows);
+  const cashInvested = inputs.purchasePrice * inputs.downPaymentPct + inputs.purchasePrice * inputs.pointsPct + inputs.closingCosts;
+  const annualNoi = noiMonthly * 12;
+  const annualDebtService = debtServiceMonthly * 12;
 
   return {
     scenario,
-    rentMonthly,
+    grossIncomeMonthly,
     effectiveGrossMonthly,
-    opexMonthly,
+    expensesMonthly,
     noiMonthly,
     debtServiceMonthly,
     cashFlowMonthly,
-    capRate,
-    cashOnCash,
-    dscr,
-    breakEvenOcc,
-    irr: irrAnnual,
-    equityBuild,
+    capRate: inputs.purchasePrice ? annualNoi / inputs.purchasePrice : 0,
+    cashOnCash: cashInvested ? (cashFlowMonthly * 12) / cashInvested : 0,
+    dscr: annualDebtService ? annualNoi / annualDebtService : 99,
+    breakEvenOcc: grossIncomeMonthly ? (expensesMonthly + debtServiceMonthly) / grossIncomeMonthly : 0,
+    debtYield: loanAmount ? annualNoi / loanAmount : 0,
+    grm: grossIncomeMonthly ? inputs.purchasePrice / (grossIncomeMonthly * 12) : 0,
+    annualDebtService,
   };
 }
 
-export function underwritingSummaryText(base: ScenarioResult, up: ScenarioResult, down: ScenarioResult) {
-  const fmt = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "inf");
-  return [
-    `Base: cashflow/mo=${base.cashFlowMonthly.toFixed(0)}, capRate=${fmt(base.capRate*100)}%, CoC=${fmt(base.cashOnCash*100)}%, DSCR=${fmt(base.dscr)}`,
-    `Upside: cashflow/mo=${up.cashFlowMonthly.toFixed(0)}, capRate=${fmt(up.capRate*100)}%, CoC=${fmt(up.cashOnCash*100)}%, DSCR=${fmt(up.dscr)}`,
-    `Downside: cashflow/mo=${down.cashFlowMonthly.toFixed(0)}, capRate=${fmt(down.capRate*100)}%, CoC=${fmt(down.cashOnCash*100)}%, DSCR=${fmt(down.dscr)}`
-  ].join("\n");
+export function buildHoldSeries(inputs: UnderwritingInputs): HoldSeriesPoint[] {
+  const base = computeScenario(inputs, "base");
+  const loanStart = inputs.purchasePrice * (1 - inputs.downPaymentPct);
+  const yearlyPrincipal = inputs.interestOnly ? 0 : Math.max(0, base.annualDebtService - loanStart * inputs.interestRate);
+  let loanBalance = loanStart;
+  let cumulativeCash = 0;
+  const rows: HoldSeriesPoint[] = [];
+  for (let year = 1; year <= inputs.holdYears; year++) {
+    cumulativeCash += base.cashFlowMonthly * 12;
+    loanBalance = Math.max(0, loanBalance - yearlyPrincipal);
+    const propertyValue = inputs.purchasePrice * Math.pow(1 + inputs.appreciationPct, year);
+    rows.push({ year, propertyValue, cumulativeCashFlow: cumulativeCash, loanBalance, equity: propertyValue - loanBalance });
+  }
+  return rows;
 }
 
-export function sensitivityGrid(inputs: UnderwritingInputs) {
+export function buildSensitivity(inputs: UnderwritingInputs): SensitivityGrid {
   const rentDeltas = [-0.1, -0.05, 0, 0.05, 0.1];
   const vacancyDeltas = [-0.03, -0.01, 0, 0.02, 0.04];
-
-  const grid = rentDeltas.map((rd) =>
-    vacancyDeltas.map((vd) => {
-      const adj: UnderwritingInputs = { ...inputs, rentMonthly: inputs.rentMonthly * (1 + rd), vacancyPct: clamp(inputs.vacancyPct + vd, 0, 0.5) };
-      const r = computeScenario(adj, "base");
-      return { cashFlowMonthly: r.cashFlowMonthly, dscr: r.dscr };
+  const cells = rentDeltas.map((r) =>
+    vacancyDeltas.map((v) => {
+      const res = computeScenario({ ...inputs, rentMonthly: effectiveRent(inputs) * (1 + r), vacancyPct: clamp(inputs.vacancyPct + v, 0, 0.6) }, "base");
+      return { rentDelta: r, vacancyDelta: v, cashFlowMonthly: res.cashFlowMonthly, dscr: res.dscr, capRate: res.capRate };
     })
   );
-
-  return { rentDeltas, vacancyDeltas, grid };
+  return { rentDeltas, vacancyDeltas, cells };
 }
 
-function percentile(sorted: number[], p: number): number {
-  if (!sorted.length) return 0;
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
-  return sorted[idx];
+export function dealRiskScore(result: ScenarioResult, marketRate?: number) {
+  let risk = 0;
+  if (result.dscr < 1) risk += 35;
+  else if (result.dscr < 1.2) risk += 20;
+  if (result.cashFlowMonthly < 0) risk += 25;
+  if (result.breakEvenOcc > 0.9) risk += 15;
+  if (marketRate && result.capRate < marketRate) risk += 15;
+  return clamp(risk, 0, 100);
 }
 
-export function monteCarloSummary(inputs: UnderwritingInputs, iterations = 250): MonteCarloSummary {
-  const irrValues: number[] = [];
-  let dscrBelowOne = 0;
-  let negativeCash = 0;
+export function maxLoanFromDscr(inputs: UnderwritingInputs) {
+  const base = computeScenario(inputs, "base");
+  const maxAnnualDebt = (base.noiMonthly * 12) / inputs.targetDscr;
+  return maxAnnualDebt / Math.max(inputs.interestRate, 0.001);
+}
 
-  for (let i = 0; i < iterations; i++) {
-    const rentShock = (Math.random() - 0.5) * 0.2;
-    const vacancyShock = (Math.random() - 0.5) * 0.06;
-    const expenseShock = (Math.random() - 0.5) * 0.1;
-    const appreciationShock = (Math.random() - 0.5) * 0.04;
-
-    const simInputs: UnderwritingInputs = {
-      ...inputs,
-      rentMonthly: Math.max(0, inputs.rentMonthly * (1 + rentShock)),
-      vacancyPct: clamp(inputs.vacancyPct + vacancyShock, 0, 0.5),
-      managementPct: clamp(inputs.managementPct * (1 + expenseShock), 0, 0.3),
-      repairsPct: clamp(inputs.repairsPct * (1 + expenseShock), 0, 0.3),
-      capexPct: clamp(inputs.capexPct * (1 + expenseShock), 0, 0.3),
-      appreciationPct: clamp(inputs.appreciationPct + appreciationShock, -0.1, 0.2),
-    };
-
-    const r = computeScenario(simInputs, "base");
-    irrValues.push(r.irr);
-    if (r.dscr < 1) dscrBelowOne += 1;
-    if (r.cashFlowMonthly < 0) negativeCash += 1;
-  }
-
-  irrValues.sort((a, b) => a - b);
-  return {
-    iterations,
-    p10Irr: percentile(irrValues, 0.1),
-    p50Irr: percentile(irrValues, 0.5),
-    p90Irr: percentile(irrValues, 0.9),
-    pNegativeCashFlow: negativeCash / iterations,
-    pDscrBelowOne: dscrBelowOne / iterations,
-  };
+export function maxOfferFromCoc(inputs: UnderwritingInputs) {
+  const res = computeScenario(inputs, "base");
+  const targetAnnualCash = (inputs.targetCoc * (inputs.closingCosts + inputs.purchasePrice * inputs.downPaymentPct)) / 12;
+  const delta = res.cashFlowMonthly - targetAnnualCash;
+  return Math.max(0, inputs.purchasePrice + delta * 120);
 }
