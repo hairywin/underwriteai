@@ -1,4 +1,5 @@
 import { localCache, stableHash } from "./cache.js";
+import { censusGeocodeJsonp } from "./censusGeocoder.js";
 import { httpFetch } from "./http.js";
 
 const GEOCODE_BASE = "https://geocoding.geo.census.gov/geocoder";
@@ -39,16 +40,20 @@ function buildGeoKey(rawAddress: string, normalizedAddress?: string) {
 }
 
 export async function normalizeAndGeocodeAddress(rawAddress: string): Promise<GeocodeResult> {
+  const trimmedAddress = rawAddress.trim();
+  if (trimmedAddress.length < 5) {
+    return {
+      rawAddress,
+      isMatchFound: false,
+      unresolvedMessage: "Please enter a valid address (at least 5 characters) before geocoding.",
+    };
+  }
+
   const baseKey = buildGeoKey(rawAddress);
   const cached = localCache.get<GeocodeResult>(baseKey);
   if (cached) return cached;
 
-  const geocodeUrl = new URL(`${GEOCODE_BASE}/locations/onelineaddress`);
-  geocodeUrl.searchParams.set("address", rawAddress);
-  geocodeUrl.searchParams.set("benchmark", "Public_AR_Current");
-  geocodeUrl.searchParams.set("format", "json");
-
-  const geocodeData = await fetchWithRetry(geocodeUrl.toString());
+  const { payload: geocodeData } = await censusGeocodeJsonp(trimmedAddress);
   const firstMatch = geocodeData?.result?.addressMatches?.[0];
 
   if (!firstMatch) {

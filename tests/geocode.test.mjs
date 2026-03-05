@@ -7,31 +7,65 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+function setupJsonpEnvironment(handler) {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  globalThis.window = globalThis;
+  globalThis.document = {
+    createElement: () => ({
+      async: true,
+      src: '',
+      onerror: null,
+      remove() {},
+    }),
+    head: {
+      appendChild: (script) => {
+        queueMicrotask(() => handler(script));
+        return script;
+      },
+    },
+  };
+  return () => {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  };
+}
+
 test('geocoder resolves unformatted address without regex normalization dependency', async () => {
   let call = 0;
+  const restoreDom = setupJsonpEnvironment((script) => {
+    const parsed = new URL(script.src);
+    const callback = parsed.searchParams.get('callback');
+    if (!callback) throw new Error('missing callback');
+    assert.equal(parsed.searchParams.get('format'), 'jsonp');
+    assert.match(parsed.searchParams.get('address') || '', /101 Jones StBodfish, CA 93205/);
+    globalThis[callback]({
+      result: {
+        addressMatches: [{ matchedAddress: '101 JONES ST, BODFISH, CA, 93205', coordinates: { x: -118.5, y: 35.5 }, matchType: 'Exact' }],
+      },
+    });
+  });
+
   globalThis.fetch = async (url) => {
     call += 1;
-    if (String(url).includes('/locations/onelineaddress')) {
-      assert.match(String(url), /address=101\+Jones\+StBodfish%2C\+CA\+93205/);
-      return jsonResponse({
-        result: {
-          addressMatches: [{ matchedAddress: '101 JONES ST, BODFISH, CA, 93205', coordinates: { x: -118.5, y: 35.5 }, matchType: 'Exact' }],
-        },
-      });
-    }
     return jsonResponse({ result: { geographies: { 'Census Tracts': [{ STATE: '06', COUNTY: '029', TRACT: '000100', BLKGRP: '1' }], Counties: [{ NAME: 'Kern County', STATE: 'CA' }] } } });
   };
 
   const out = await normalizeAndGeocodeAddress('101 Jones StBodfish, CA 93205');
+  restoreDom();
   assert.equal(out.isMatchFound, true);
   assert.equal(out.normalizedAddress, '101 JONES ST, BODFISH, CA, 93205');
   assert.equal(out.tract, '000100');
-  assert.equal(call, 2);
+  assert.equal(call, 1);
 });
 
 test('returns unresolved state when geocoder finds no matches', async () => {
-  globalThis.fetch = async () => jsonResponse({ result: { addressMatches: [] } });
+  const restoreDom = setupJsonpEnvironment((script) => {
+    const callback = new URL(script.src).searchParams.get('callback');
+    globalThis[callback]({ result: { addressMatches: [] } });
+  });
   const out = await normalizeAndGeocodeAddress('zzzz unknown');
+  restoreDom();
   assert.equal(out.isMatchFound, false);
   assert.match(out.unresolvedMessage || '', /couldn't resolve/i);
 });
