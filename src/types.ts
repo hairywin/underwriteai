@@ -1,10 +1,27 @@
 export type TabsKey = "overview" | "underwrite" | "comps" | "ai" | "exports" | "settings";
 
+export type StepKey =
+  | "deal"
+  | "underwrite"
+  | "comps"
+  | "scenarios"
+  | "memo"
+  | "exports"
+  | "settings";
+
+export type PropertyType = "single_family" | "multifamily";
+
 export type Settings = {
   openaiApiKey: string;
   rentcastApiKey: string;
-  enableWebSearch: boolean;
-  searchApiKey: string;
+  fredApiKey: string;
+  defaultModel: string;
+};
+
+export type UnitMixRow = {
+  type: "Studio" | "1BR" | "2BR" | "3BR+";
+  count: number;
+  avgRent: number;
 };
 
 export type PropertyFacts = {
@@ -16,138 +33,136 @@ export type PropertyFacts = {
   squareFootage?: number;
   lotSize?: number;
   yearBuilt?: number;
-  price?: number;
-  features?: string[];
-  description?: string;
-  photoUrl?: string;
+  estimatedValue?: number;
   sourceNotes?: string[];
 };
 
 export type RentComp = {
-  address?: string;
+  id: string;
+  address: string;
   city?: string;
   state?: string;
-  zipCode?: string;
-  latitude?: number;
-  longitude?: number;
+  rent?: number;
   bedrooms?: number;
   bathrooms?: number;
   squareFootage?: number;
   distanceMiles?: number;
-  rent?: number;
+  daysOnMarket?: number;
   url?: string;
-  source?: string;
   score?: number;
   scoreReason?: string;
 };
 
 export type SaleComp = {
+  id?: string;
   address: string;
-  price: number;
+  price?: number;
   bedrooms?: number;
   bathrooms?: number;
   squareFootage?: number;
+  distanceMiles?: number;
+  soldDate?: string;
   url?: string;
   notes?: string;
 };
 
-export type RentcastRentEstimateResponse = {
-  rent?: number;
-  rentRangeLow?: number;
-  rentRangeHigh?: number;
-  comparables?: any[];
-  subjectProperty?: any;
-};
-
 export type UnderwritingInputs = {
+  propertyType: PropertyType;
+  units: number;
+  useUnitMix: boolean;
+  unitMix: UnitMixRow[];
+  rentMonthly: number;
+  otherIncomeMonthly: number;
   purchasePrice: number;
   downPaymentPct: number;
-
   interestOnly: boolean;
   interestRate: number;
   termYears: number;
-
   pointsPct: number;
   closingCosts: number;
-
   propertyTaxAnnual: number;
   insuranceAnnual: number;
   hoaMonthly: number;
-
   vacancyPct: number;
   managementPct: number;
   repairsPct: number;
   capexPct: number;
+  reservePct: number;
+  includeCapex: boolean;
+  includeManagement: boolean;
+  includeReserves: boolean;
+  expenseRatioPct: number;
+  useExpenseRatio: boolean;
   otherMonthly: number;
-
   holdYears: number;
   appreciationPct: number;
   saleCostsPct: number;
-
-  rentMonthly: number;
+  exitCapRate: number;
+  targetDscr: number;
+  targetCoc: number;
+  targetCashFlowMonthly: number;
 };
 
 export type ScenarioKey = "base" | "upside" | "downside";
 
 export type ScenarioResult = {
   scenario: ScenarioKey;
-  rentMonthly: number;
+  grossIncomeMonthly: number;
   effectiveGrossMonthly: number;
-  opexMonthly: number;
+  expensesMonthly: number;
   noiMonthly: number;
   debtServiceMonthly: number;
   cashFlowMonthly: number;
-
   capRate: number;
   cashOnCash: number;
   dscr: number;
   breakEvenOcc: number;
+  debtYield: number;
+  grm: number;
+  annualDebtService: number;
+};
 
-  irr: number;
-  equityBuild: number;
+export type HoldSeriesPoint = {
+  year: number;
+  propertyValue: number;
+  cumulativeCashFlow: number;
+  loanBalance: number;
+  equity: number;
+};
+
+export type SensitivityCell = {
+  rentDelta: number;
+  vacancyDelta: number;
+  cashFlowMonthly: number;
+  dscr: number;
+  capRate: number;
+};
+
+export type SensitivityGrid = {
+  rentDeltas: number[];
+  vacancyDeltas: number[];
+  cells: SensitivityCell[][];
+};
+
+export type DealContext = {
+  facts: PropertyFacts | null;
+  rentComps: RentComp[];
+  saleComps: SaleComp[];
+  assumptions: UnderwritingInputs;
+  scenarios: ScenarioResult[];
+  marketRate?: number;
+  inflationRate?: number;
 };
 
 export type AiDeepDive = {
   highlights: string[];
-  redFlags: string[];
-  rentRationale: string;
+  risks: string[];
+  rentJustification: string;
   memo: string;
-  overallScore: number;
-  confidenceScore: number;
-  buyBoxFit: "strong" | "moderate" | "weak";
-  recommendation: "buy" | "watch" | "pass";
-  keyDrivers: string[];
-  dueDiligence: string[];
-  dealKillers: string[];
+  nextSteps: string[];
 };
 
-export type RentcastMemoContext = {
-  rentEstimate?: number;
-  rentRangeLow?: number;
-  rentRangeHigh?: number;
-  valueEstimate?: number;
-  valueRangeLow?: number;
-  valueRangeHigh?: number;
-  subjectProperty?: {
-    bedrooms?: number;
-    bathrooms?: number;
-    squareFootage?: number;
-    propertyType?: string;
-    yearBuilt?: number;
-  };
-  compSummary?: {
-    rentCompCount?: number;
-    weightedRent?: number;
-    averageCompScore?: number;
-  };
-  disagreementFlags?: string[];
-};
-
-export type MonteCarloSummary = {
-  iterations: number;
-  p10Irr: number;
-  p50Irr: number;
-  p90Irr: number;
-  pNegativeCashFlow: number;
-  pDscrBelowOne: number;
+export type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
 };
