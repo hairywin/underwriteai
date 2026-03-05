@@ -44,7 +44,7 @@ export async function runUnderwritingPipeline(address: string, settings: Setting
     return { facts, rent, value };
   })();
 
-  const censusPromise = fetchNeighborhoodProfile(geo).catch((e: any) => {
+  const censusPromise = fetchNeighborhoodProfile(geo, settings.censusApiKey.trim()).catch((e: any) => {
     errors.push(e.message || "Neighborhood profile unavailable.");
     return { geographyLevel: "unavailable", year: "2022", warnings: ["Neighborhood profile unavailable."] } as Awaited<ReturnType<typeof fetchNeighborhoodProfile>>;
   });

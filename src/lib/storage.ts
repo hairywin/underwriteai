@@ -7,6 +7,7 @@ export const defaultSettings: Settings = {
   openaiApiKey: "",
   rentcastApiKey: "",
   fredApiKey: "",
+  censusApiKey: "",
   defaultModel: DEFAULT_OPENAI_MODEL,
 };
 
