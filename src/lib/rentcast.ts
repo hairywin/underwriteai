@@ -83,18 +83,35 @@ function isInsufficientCompsError(error: unknown) {
 }
 
 async function rcGet<T>(path: string, apiKey: string, params: Record<string, string>, options: RcRequestOptions = {}) {
-  const url = new URL(`${BASE}${path}`);
-  Object.entries(params).forEach(([k, v]) => {
-    if (v != null && v !== "") url.searchParams.set(k, v);
-  });
+  const buildUrl = (includeApiKeyParam = false) => {
+    const url = new URL(`${BASE}${path}`);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v != null && v !== "") url.searchParams.set(k, v);
+    });
+    if (includeApiKeyParam) url.searchParams.set("apiKey", apiKey);
+    return url;
+  };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(url.toString(), { headers: { "X-Api-Key": apiKey }, signal: controller.signal });
+  const request = async (useHeaderAuth: boolean) => {
+    const res = await fetch(buildUrl(!useHeaderAuth).toString(), {
+      headers: useHeaderAuth ? { "X-Api-Key": apiKey } : undefined,
+      signal: controller.signal,
+    });
     if (!res.ok) throw new RentcastHttpError(res.status, await res.text());
     return (await res.json()) as T;
+  };
+
+  try {
+    try {
+      return await request(true);
+    } catch (error: any) {
+      const isNetworkError = error?.name === "TypeError" || /failed to fetch/i.test(String(error?.message || ""));
+      if (!isNetworkError) throw error;
+      // Some browser origins reject preflight for custom headers; query param auth avoids that preflight.
+      return await request(false);
+    }
   } catch (error: any) {
     if (error?.name === "AbortError") {
       throw new Error("RentCast request timed out. Please retry.");

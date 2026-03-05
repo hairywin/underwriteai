@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { fetchValueData, rentcastInternals } = await import('../tmp_test_build/lib/rentcast.js');
+const { fetchPropertyFacts, fetchValueData, rentcastInternals } = await import('../tmp_test_build/lib/rentcast.js');
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -80,4 +80,23 @@ test('fallback selection prefers listing price then comps ppsf', async () => {
   const ppsfFallback = await fetchValueData('101 Jones St, Bodfish, CA 93205', 'key', { subjectSquareFootage: 1000 });
   assert.equal(ppsfFallback.valuation.source, 'comps_price_per_sqft_fallback');
   assert.ok((ppsfFallback.valueEstimate ?? 0) > 0);
+});
+
+test('falls back to apiKey query auth when header-auth request hits network error', async () => {
+  const fetchMock = async (url, init) => {
+    const call = fetchMock.calls.length;
+    fetchMock.calls.push({ url: String(url), init });
+    if (call === 0) throw new TypeError('Failed to fetch');
+    if (call === 1) return jsonResponse([{ formattedAddress: '101 Jones St, Bodfish, CA 93205' }]);
+    if (call === 2) return jsonResponse([{ formattedAddress: '101 Jones St, Bodfish, CA 93205' }]);
+    throw new Error('unexpected call');
+  };
+  fetchMock.calls = [];
+  globalThis.fetch = fetchMock;
+
+  await fetchPropertyFacts('101 Jones St, Bodfish, CA 93205', 'key');
+  assert.equal(fetchMock.calls.length, 3);
+  assert.equal(fetchMock.calls[0].init?.headers?.['X-Api-Key'], 'key');
+  assert.match(fetchMock.calls[1].url, /apiKey=key/);
+  assert.equal(fetchMock.calls[1].init?.headers, undefined);
 });
