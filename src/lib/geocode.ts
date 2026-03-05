@@ -1,4 +1,5 @@
 import { localCache, stableHash } from "./cache.js";
+import { httpFetch } from "./http.js";
 
 const GEOCODE_BASE = "https://geocoding.geo.census.gov/geocoder";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -22,17 +23,12 @@ export type GeocodeResult = {
 async function fetchWithRetry(url: string, retries = 2): Promise<any> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
     try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`Census Geocoder error ${res.status}`);
+      const res = await httpFetch(url, {}, "US Census geocoder");
       return await res.json();
     } catch (error) {
       lastError = error;
       if (attempt < retries) await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
-    } finally {
-      clearTimeout(timeout);
     }
   }
   throw lastError;

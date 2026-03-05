@@ -1,19 +1,17 @@
 import { DEFAULT_OPENAI_MODEL, OPENAI_RESPONSES_URL } from "../config";
 import type { AiDeepDive, ChatMessage, DealContext } from "../types";
-
-function friendlyOpenAiError(status: number, body: string) {
-  if (status === 401) return "OpenAI key invalid.";
-  if (status === 429) return "OpenAI rate limited or quota exceeded.";
-  return `OpenAI error ${status}: ${body || "Unknown response"}`;
-}
+import { httpFetch } from "./http.js";
 
 async function callOpenAi(apiKey: string, body: any) {
-  const res = await fetch(OPENAI_RESPONSES_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(friendlyOpenAiError(res.status, await res.text()));
+  const res = await httpFetch(
+    OPENAI_RESPONSES_URL,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    "OpenAI responses",
+  );
   return res.json();
 }
 
