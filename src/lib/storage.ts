@@ -1,12 +1,13 @@
 import { DEFAULT_OPENAI_MODEL } from "../config";
 import type { Settings } from "../types";
 
-const SETTINGS_KEY = "underwriteai_settings_v2";
+const SETTINGS_KEY = "underwriteai_settings_v3";
 
 export const defaultSettings: Settings = {
   openaiApiKey: "",
   rentcastApiKey: "",
   fredApiKey: "",
+  censusApiKey: "",
   defaultModel: DEFAULT_OPENAI_MODEL,
 };
 

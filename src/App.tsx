@@ -5,15 +5,15 @@ import { Scorecard } from "./components/Scorecard";
 import { Tooltip } from "./components/Tooltip";
 import { DEFAULTS } from "./config";
 import { exportCsv, exportPdf, exportXlsx } from "./lib/exports";
-import { fetchMarketRates } from "./lib/fred";
+import { formatCurrency, formatPercent } from "./lib/format";
 import { runDealChat, runDeepDive } from "./lib/openai";
-import { fetchPropertyFacts, fetchRentData, fetchValueData } from "./lib/rentcast";
+import { runUnderwritingPipeline } from "./lib/pipeline";
 import { clearSettings, defaultSettings, loadSettings, saveSettings } from "./lib/storage";
 import { buildHoldSeries, buildSensitivity, computeScenario, dealRiskScore, maxLoanFromDscr, maxOfferFromCoc } from "./lib/underwriting";
 import type { AiDeepDive, ChatMessage, DealContext, PropertyFacts, RentComp, SaleComp, ScenarioKey, Settings, StepKey, UnderwritingInputs } from "./types";
 
-const money = (n?: number) => (n == null ? "—" : `$${Math.round(n).toLocaleString()}`);
-const pct = (n?: number) => (n == null ? "—" : `${(n * 100).toFixed(2)}%`);
+const money = formatCurrency;
+const pct = formatPercent;
 
 const STEPS: StepKey[] = ["deal", "underwrite", "comps", "scenarios", "memo", "exports", "settings"];
 
@@ -91,49 +91,28 @@ export function App() {
   const context: DealContext = { facts, rentComps, saleComps, assumptions: inputs, scenarios: results, marketRate, inflationRate };
 
   async function analyzeDeal() {
-    setBusy("Loading property + comp data...");
+    setBusy("Running underwriting pipeline (geocode → data sources)...");
     setError("");
     setValuationWarnings([]);
     setValuationStatus(null);
     try {
-      if (!settings.rentcastApiKey.trim()) throw new Error("RentCast key required in Settings.");
       if (!address.trim()) throw new Error("Address is required.");
-      const f = await fetchPropertyFacts(address, settings.rentcastApiKey.trim());
-      const [rent, value] = await Promise.all([
-        fetchRentData(address, settings.rentcastApiKey.trim()),
-        fetchValueData(address, settings.rentcastApiKey.trim(), {
-          listingPrice: inputs.purchasePrice > 0 ? inputs.purchasePrice : undefined,
-          subjectSquareFootage: f?.squareFootage,
-        }),
-      ]);
-      setFacts(f || { address });
-      setRentComps(rent.comps);
-      setSaleComps(value.comps);
-      setValuationWarnings(value.valuation.warnings || []);
-      setValuationStatus(value.valuation.status);
+      const result = await runUnderwritingPipeline(address, settings, inputs);
+      setFacts({ address, normalizedAddress: result.subject.normalizedAddress });
+      setValuationWarnings([...result.valuation.warnings, ...result.neighborhood.warnings, ...result.errors]);
+      setValuationStatus(result.valuation.confidence === "low" ? "unavailable" : "ok");
+      if (result.macro.mortgageRate) setMarketRate(result.macro.mortgageRate);
+      if (result.macro.inflationRef) setInflationRate(result.macro.inflationRef);
       setInputs((prev) => ({
         ...prev,
-        purchasePrice: prev.purchasePrice || value.valueEstimate || f?.estimatedValue || 0,
-        rentMonthly: prev.rentMonthly || rent.rentEstimate || 0,
+        purchasePrice: prev.purchasePrice || result.valuation.value || 0,
+        rentMonthly: prev.rentMonthly || result.rent.rentEstimate || 0,
       }));
+      setRentComps([]);
+      setSaleComps([]);
       setStep("underwrite");
     } catch (e: any) {
       setError(e.message || "Analyze failed.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function fetchFred() {
-    setBusy("Loading FRED market data...");
-    setError("");
-    try {
-      const data = await fetchMarketRates(settings.fredApiKey.trim());
-      setMarketRate(data.mortgageRate);
-      setInflationRate(data.inflationRef);
-      if (data.mortgageRate) setInputs((i) => ({ ...i, interestRate: i.interestRate || data.mortgageRate! }));
-    } catch (e: any) {
-      setError(e.message || "Failed loading FRED data.");
     } finally {
       setBusy("");
     }
@@ -203,8 +182,7 @@ export function App() {
             </div>
             <div>
               <div className="font-semibold mb-2">Market data (FRED)</div>
-              <button className="px-3 py-2 border rounded" onClick={fetchFred}>Load Mortgage + CPI</button>
-              <div className="mt-2 text-sm">Mortgage reference: {pct(marketRate)}</div>
+                            <div className="mt-2 text-sm">Mortgage reference: {pct(marketRate)}</div>
               <div className="text-sm">CPI reference: {pct(inflationRate)}</div>
               <div className="text-xs text-slate-500 mt-2">OpenAI cannot browse the internet. It only uses RentCast/FRED/user inputs loaded here.</div>
             </div>
@@ -263,8 +241,9 @@ export function App() {
             <SettingInput label="OpenAI API key" value={settings.openaiApiKey} onChange={(v) => setSettings({ ...settings, openaiApiKey: v })} />
             <SettingInput label="RentCast API key" value={settings.rentcastApiKey} onChange={(v) => setSettings({ ...settings, rentcastApiKey: v })} />
             <SettingInput label="FRED API key" value={settings.fredApiKey} onChange={(v) => setSettings({ ...settings, fredApiKey: v })} />
+            <SettingInput label="Census Data API key" value={settings.censusApiKey} onChange={(v) => setSettings({ ...settings, censusApiKey: v })} />
             <SettingInput label="Default model" value={settings.defaultModel} onChange={(v) => setSettings({ ...settings, defaultModel: v })} />
-            <div className="col-span-full text-xs text-slate-600">Keys are stored in browser localStorage only.</div>
+            <div className="col-span-full text-xs text-slate-600">Keys are stored in browser localStorage only. Census key entered here overrides env config for this browser.</div>
             <div className="col-span-full flex gap-2"><button className="px-3 py-2 bg-black text-white rounded" onClick={() => saveSettings(settings)}>Save settings</button><button className="px-3 py-2 border rounded" onClick={() => { clearSettings(); setSettings(loadSettings()); }}>Clear keys</button></div>
           </div>
         )}
