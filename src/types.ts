@@ -15,6 +15,7 @@ export type Settings = {
   openaiApiKey: string;
   rentcastApiKey: string;
   fredApiKey: string;
+  censusApiKey: string;
   defaultModel: string;
 };
 

@@ -241,6 +241,7 @@ export function App() {
             <SettingInput label="OpenAI API key" value={settings.openaiApiKey} onChange={(v) => setSettings({ ...settings, openaiApiKey: v })} />
             <SettingInput label="RentCast API key" value={settings.rentcastApiKey} onChange={(v) => setSettings({ ...settings, rentcastApiKey: v })} />
             <SettingInput label="FRED API key" value={settings.fredApiKey} onChange={(v) => setSettings({ ...settings, fredApiKey: v })} />
+            <SettingInput label="Census Data API key" value={settings.censusApiKey} onChange={(v) => setSettings({ ...settings, censusApiKey: v })} />
             <SettingInput label="Default model" value={settings.defaultModel} onChange={(v) => setSettings({ ...settings, defaultModel: v })} />
             <div className="col-span-full text-xs text-slate-600">Keys are stored in browser localStorage only.</div>
             <div className="col-span-full flex gap-2"><button className="px-3 py-2 bg-black text-white rounded" onClick={() => saveSettings(settings)}>Save settings</button><button className="px-3 py-2 border rounded" onClick={() => { clearSettings(); setSettings(loadSettings()); }}>Clear keys</button></div>
